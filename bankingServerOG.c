@@ -1,0 +1,428 @@
+#include "interface.h"
+//ADD socketOPT when command line is forced to quit
+node* head = NULL;
+node* currentNode = NULL;
+pthread_mutex_t listLock = PTHREAD_MUTEX_INITIALIZER;
+struct fdList * fdHead;
+pthread_mutex_t fdLock = PTHREAD_MUTEX_INITIALIZER;
+void intHandler(int dummy) {
+		pthread_mutex_lock(&fdLock);
+    while(fdHead!=NULL){
+    	write(fdHead->name, "Disconnecting from Server", 26);
+    	close(fdHead->name);
+    	fdHead = fdHead->next;
+    }
+    	pthread_mutex_unlock(&fdLock);
+    	//JOIN ALL THREADS
+    exit(0);
+}
+int main(int argc, char* argv[])
+{
+	 signal(SIGINT, intHandler);
+    int option = 1;
+    int sockfd, newsockfd, portno, clilen;
+    char buffer[260];
+     struct sockaddr_in serv_addr, cli_addr;
+     int n;
+     if (argc < 2) {
+         fprintf(stderr,"ERROR, no port provided\n");
+         exit(1);
+     }
+     sockfd = socket(AF_INET, SOCK_STREAM, 0);
+     if (sockfd < 0) 
+        error("ERROR opening socket");
+     bzero((char *) &serv_addr, sizeof(serv_addr));
+     portno = atoi(argv[1]);
+     serv_addr.sin_family = AF_INET;
+     serv_addr.sin_addr.s_addr = INADDR_ANY;
+     serv_addr.sin_port = htons(portno);
+
+           if(setsockopt(sockfd, SOL_SOCKET, (SO_REUSEPORT | SO_REUSEADDR), (char*)&option, sizeof(option)) < 0)
+        {
+                printf("setsockopt failed\n");
+                close(sockfd);
+                exit(2);
+        }
+     if (bind(sockfd, (struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0)
+             {
+              error("ERROR on binding");
+           }
+
+     
+     while(1){
+     listen(sockfd,128);
+     clilen = sizeof(cli_addr);
+     newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+     if (newsockfd < 0) 
+     {
+          error("ERROR on accept");
+       }
+
+     //create thread which calls serve and takes newsockfd as the argument 
+	pthread_mutex_lock(&fdLock);
+     if(fdHead==NULL){
+     	struct fdList * n = (struct fdList *) malloc(sizeof(struct fdList));
+     	n->name = newsockfd;
+     	fdHead = n;
+     }
+     else{
+     	struct fdList * n = (struct fdList *) malloc(sizeof(struct fdList));
+     	n->name = newsockfd;
+     	n->next = fdHead;
+     	fdHead = n;
+     }
+     	pthread_mutex_unlock(&fdLock);
+    // printf("%s\n", buffer);
+	  printf("Connected to Client\n");
+	  fflush(stdout);
+     pthread_t thread;
+     if(pthread_create(&thread, NULL, helper, (void*)&newsockfd))
+       {
+     printf("Critical Error Creating Thread!\n");
+     exit(-1);
+       }
+
+     
+     //printf("Here is the message: %s\n",buffer);
+     //n = write(newsockfd, buffer, strlen(buffer)); 
+     //if (n < 0) 
+     //{
+     //error("ERROR writing to socket");
+     
+     } 
+    	
+     close(sockfd);
+     return 0; 
+}
+
+void* helper(void* args)
+{
+ 
+  int i, n;
+  char buffer[260];
+  int* newfdPoint = (int*)args;
+  int newsockfd = *newfdPoint;
+  char lengthCharRep[3];
+  int length;
+  char key;
+  char accountName[256];
+  
+  while(1)
+    {
+  bzero(buffer,260);
+  bzero(accountName, 256);
+  bzero(lengthCharRep, 3);
+  n = read(newsockfd,buffer,260);
+  // printf("%s\n", buffer);
+  //fflush(stdout);
+  if (n < 0) {
+  error("ERROR reading from socket");
+  }
+
+  i = 0;
+  int leadingZeros = 0; ////Flag to disregard leading zeros of the length!
+  while(i < 3)
+    {
+      if(strncmp(buffer + i, "0", 1) != 0 || leadingZeros == 1)
+    {
+      if(leadingZeros == 0)
+        {
+          leadingZeros = 1;
+        }
+      strncat(lengthCharRep, buffer + i, 1);
+      i++;
+    }
+      else
+    {
+      i++;
+    }
+    }
+  length = atoi(lengthCharRep);
+ // printf("this is length: %d\n", length);
+   
+    
+  key = buffer[3];
+  
+  i = 0;
+  while(i < length)
+    {
+      strncat(accountName, buffer + (i + 4), 1);
+      i++;
+    }
+  strncat(accountName, "\0", 1);
+ 
+  if(key == 'C')
+    {
+    	pthread_mutex_lock(&listLock);
+      create(accountName, newsockfd);
+      pthread_mutex_unlock(&listLock);
+    }
+  else if(key == 'S')
+    {
+        
+      serve(accountName, newsockfd);
+    }
+  else if(key == 'Q')
+    {
+    	printf("Disconnecting from a Client\n");
+    	fflush(stdout);
+    	write(newsockfd, "Disconnecting from Server", 26);
+    	
+      pthread_exit(NULL);
+    }
+  else
+    {
+      write(newsockfd, "Must serve an account before this request", 42);
+    }
+
+    }
+  }
+
+void create(char* accName, int newsockfd)
+{
+  int accountExists = 0;
+  account* newAccount = (account*)malloc(sizeof(account));
+  //printf("%s\n", accName);
+  strncpy(newAccount->accountName, accName, strlen(accName));
+  
+  newAccount -> currentBalance = 0.0;
+  newAccount -> inSessionFlag = 0;
+
+  node* temp = getHead();
+
+  
+  if(temp == NULL)
+    {
+      createList(newAccount);
+       write(newsockfd, "Account successfully added", 27);
+    }
+  else
+    {
+    
+    
+      if(getAccount(accName) != NULL)
+    {
+      accountExists = 1;
+      write(newsockfd, "Account already exists with that name", 38);
+    }
+      
+    
+    if(accountExists == 0)
+      {
+      addAccount(newAccount);
+      write(newsockfd, "Account successfully added", 27);
+      }
+    }
+  
+}
+
+void serve(char* accName, int newsockfd)
+{
+    
+  int i, n;
+  char lengthCharRep[3];
+  int length;
+  char key;
+   pthread_mutex_lock(&listLock);
+  account* retrievedAccount = getAccount(accName);
+   pthread_mutex_unlock(&listLock);
+  if (retrievedAccount==NULL){
+  	write(newsockfd, "Account does not exist", 23);
+  	return;
+  }
+  char buffer[100];
+  char amountCharRep[30];
+  double amount;
+   char output[50];
+   
+  if((retrievedAccount -> inSessionFlag) == 1)
+    {
+      write(newsockfd, "Account Requested is Already Being Serviced", 44);
+      return;
+      
+    }
+  else
+    {
+      (retrievedAccount -> inSessionFlag) = 1;
+    }
+    write(newsockfd, "Successfully Serving", 21);
+  while(1)
+    {
+  bzero(output, 50);
+  bzero(amountCharRep, 30);
+  bzero(buffer, 100);
+ 
+  n = read(newsockfd, buffer, 100);
+  
+  if(n < 0)
+    {
+      printf("Trouble reading from socket");
+    }
+  
+  i = 0;
+  int leadingZeros = 0; ////Flag to disregard leading zeros of the length!
+  while(i < 3)
+    {
+      if(strncmp(buffer + i, "0", 1) != 0 || leadingZeros == 1)
+    {
+      if(leadingZeros == 0)
+        {
+          leadingZeros = 1;
+        }
+      strncat(lengthCharRep, buffer + i, 1);
+      i++;
+    }
+      else
+    {
+      i++;
+    }
+    }
+  length = atoi(lengthCharRep);
+  //printf("this is length: %d\n", length);
+   
+    
+  key = buffer[3];
+
+  if(length != 0)
+    {
+       i = 0;
+       while(i < length)
+    {
+       strncat(amountCharRep, buffer + (i + 4), 1);
+       i++;
+    }
+     amount = atof(amountCharRep);
+    }
+  double q;
+  
+
+  switch(key)
+    {
+    case '+':
+      deposit(accName, amount);
+      write(newsockfd, "Successful Deposit", 19);
+      break;
+    case '-':
+      
+      withdraw(accName, amount, newsockfd);
+      break;
+    case '=':
+        
+        q = query(accName);
+        snprintf(output, 50, "%f", q);
+        n = write(newsockfd, output, 50);
+        write(newsockfd, "Successful Query", 17);
+	break;
+    case 'E':
+      end(accName);
+      write(newsockfd, "Successfully Ended", 19);
+      return;
+      break;
+    default:
+    	write(newsockfd, "Not valid while serving",24);
+    }
+    }
+
+
+}
+
+void  deposit(char* accName, double depositAmount)
+{
+  account* retrievedAccount = getAccount(accName);
+  /* if(retrievedAccount == NULL)
+    {
+     	printf("No Such Account Exists\n");
+      return;
+    }
+  if((retrievedAccount -> inSessionFlag) == 0)
+    {
+      printf("Account Is Not Being Served\n");
+      return;
+      }*/
+  (retrievedAccount -> currentBalance) = (retrievedAccount -> currentBalance) + depositAmount;
+}
+
+void withdraw(char* accName, double withdrawAmount, int newsockfd)
+{
+  account* retrievedAccount = getAccount(accName);
+  /* if(retrievedAccount == NULL)
+    {
+      printf("No Such Account Exists\n");
+      return 0;
+    }
+  if((retrievedAccount -> inSessionFlag) == 0)
+    {
+      printf("Account Is Not Being Served\n");
+      return 0;
+      }*/
+  double currBal = (retrievedAccount -> currentBalance);
+  if((currBal - withdrawAmount) < 0)
+     {
+       write(newsockfd, "Insuffient Funds", 17);  
+      return;
+    }
+  (retrievedAccount -> currentBalance) = (retrievedAccount -> currentBalance) - withdrawAmount;
+  write(newsockfd, "Successful Withdraw", 20);
+}
+
+double  query(char* accName)
+{
+  account* retrievedAccount = getAccount(accName);
+  printf("%s\n", retrievedAccount -> accountName);
+  return (retrievedAccount -> currentBalance);
+  
+}
+
+void end(char* accName)
+{
+   account* retrievedAccount = getAccount(accName);
+   retrievedAccount -> inSessionFlag = 0;
+}
+
+
+
+
+
+
+
+node* getHead()
+{
+    return head;
+}
+
+
+account* getAccount(char* accName)
+{
+        currentNode = head;
+        while(currentNode != NULL)
+        {
+            char* currentData = (char*)(currentNode -> data -> accountName);
+            if(strncmp(currentData, accName, (strlen(accName) + 1)) == 0)
+            {
+                return currentNode -> data;
+            }
+            else {
+                currentNode = currentNode -> nextNode; 
+            }
+        }
+        return NULL;
+        
+         
+    }
+
+void createList(account* newAccount)
+{
+    node* newNode = (node*)malloc(sizeof(node));
+    newNode -> data = newAccount;
+    newNode -> nextNode = NULL;
+    head = newNode;
+    
+}
+
+void addAccount(account* newAccount)
+{
+    node* newNode = (node*)malloc(sizeof(node));
+    newNode -> data = newAccount;
+    newNode -> nextNode = head;
+    head = newNode;
+}

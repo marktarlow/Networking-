@@ -1,0 +1,10 @@
+CC = gcc
+HEADER = interface.h
+
+all: bankingServer bankingClient
+
+bankingServer.o: bankingServer.c $(HEADER)
+	$(CC) -c bankingServer.c -o bankingServer.o
+
+bankingClient.o: bankingClient.c $(HEADER)
+	($CC) -c 

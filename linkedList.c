@@ -1,0 +1,47 @@
+#include "interface.h"
+
+
+node* head = NULL;
+node* currentNode = NULL;
+
+node* getHead()
+{
+	return head;
+}
+
+
+account* getAccount(char* accName)
+{
+		currentNode = head;
+		while(currentNode != NULL)
+		{
+			char* currentData = (char*)(currentNode -> data -> accountName);
+			if(strncmp(currentData, accName, (strlen(accName) + 1)) == 0)
+			{
+				return currentNode -> data;
+			}
+			else {
+				currentNode = currentNode -> nextNode; 
+			}
+		}
+		return NULL;
+		
+		 
+	}
+
+void createList(account* newAccount)
+{
+	node* newNode = (node*)malloc(sizeof(node));
+	newNode -> data = newAccount;
+	newNode -> nextNode = NULL;
+	head = newNode;
+	
+}
+
+void addAccount(account* newAccount)
+{
+	node* newNode = (node*)malloc(sizeof(node));
+	newNode -> data = newAccount;
+	newNode -> nextNode = head;
+	head = newNode;
+}
